@@ -10,6 +10,11 @@
   - Feishu requires `FEISHU_APP_ID`, `FEISHU_APP_SECRET` environment variables
   - Optional `FEISHU_DOMAIN` ("feishu" for China, "lark" for international)
 - Platform abstraction layer (`src/platform.ts`) for easier extension to other messaging platforms
+- `PlatformAdapter.supportsThreads` property to control thread behavior per platform
+
+### Changed
+
+- Feishu: Tool call details are now silently skipped (instead of posted as replies) since Feishu doesn't support folded threads like Slack
 
 ### Fixed
 

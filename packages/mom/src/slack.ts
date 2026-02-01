@@ -125,6 +125,7 @@ class ChannelQueue {
 
 export class SlackBot implements PlatformAdapter {
 	readonly platformId = "slack" as const;
+	readonly supportsThreads = true;
 
 	private socketClient: SocketModeClient;
 	private webClient: WebClient;

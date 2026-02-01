@@ -174,6 +174,13 @@ export interface PlatformAdapter {
 	/** Stop the platform connection */
 	stop(): Promise<void>;
 
+	/**
+	 * Whether the platform supports native thread/reply folding.
+	 * If true, tool details are posted as thread replies (like Slack).
+	 * If false, tool details are silently skipped to avoid cluttering the chat.
+	 */
+	readonly supportsThreads: boolean;
+
 	/** Get a user by ID */
 	getUser(userId: string): PlatformUser | undefined;
 

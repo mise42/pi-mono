@@ -200,6 +200,11 @@ function createPlatformContext(
 		},
 
 		respondInThread: async (text: string) => {
+			// Skip thread messages for platforms that don't support folded threads
+			// (e.g., Feishu replies appear inline, cluttering the chat)
+			if (!platform.supportsThreads) {
+				return;
+			}
 			updatePromise = updatePromise.then(async () => {
 				if (messageTs) {
 					const ts = await platform.postInThread(event.channel, messageTs, text);

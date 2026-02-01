@@ -176,6 +176,7 @@ async function resolveFeishuSenderName(client: Lark.Client, senderOpenId: string
 
 export class FeishuBot implements PlatformAdapter {
 	readonly platformId = "feishu" as const;
+	readonly supportsThreads = false; // Feishu replies appear inline, not folded like Slack threads
 
 	private config: FeishuConfig;
 	private handler: PlatformHandler;
