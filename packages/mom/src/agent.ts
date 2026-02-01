@@ -1,5 +1,5 @@
 import { Agent, type AgentEvent } from "@mariozechner/pi-agent-core";
-import { getModel, type ImageContent } from "@mariozechner/pi-ai";
+import { type Api, getModel, type ImageContent, type KnownProvider, type Model } from "@mariozechner/pi-ai";
 import {
 	AgentSession,
 	AuthStorage,
@@ -23,8 +23,31 @@ import type { ChannelInfo, SlackContext, UserInfo } from "./slack.js";
 import type { ChannelStore } from "./store.js";
 import { createMomTools, setUploadFunction } from "./tools/index.js";
 
-// Hardcoded model for now - TODO: make configurable (issue #63)
-const model = getModel("anthropic", "claude-sonnet-4-5");
+// Default models
+const DEFAULT_MODELS: Record<string, string> = {
+	"amazon-bedrock": "us.anthropic.claude-opus-4-20250514-v1:0",
+	anthropic: "claude-sonnet-4-5",
+	openai: "gpt-5.1-codex",
+	"azure-openai-responses": "gpt-5.2",
+	"openai-codex": "gpt-5.2-codex",
+	google: "gemini-2.5-pro",
+	"google-gemini-cli": "gemini-2.5-pro",
+	"google-antigravity": "gemini-3-pro-high",
+	"google-vertex": "gemini-3-pro-preview",
+	"github-copilot": "gpt-4o",
+	openrouter: "openai/gpt-5.1-codex",
+	"vercel-ai-gateway": "anthropic/claude-opus-4.5",
+	xai: "grok-4-fast-non-reasoning",
+	groq: "openai/gpt-oss-120b",
+	cerebras: "zai-glm-4.6",
+	zai: "glm-4.6",
+	mistral: "devstral-medium-latest",
+	minimax: "MiniMax-M2.1",
+	"minimax-cn": "MiniMax-M2.1",
+	huggingface: "moonshotai/Kimi-K2.5",
+	opencode: "claude-opus-4-5",
+	"kimi-coding": "kimi-k2-thinking",
+};
 
 export interface PendingMessage {
 	userName: string;
@@ -42,12 +65,12 @@ export interface AgentRunner {
 	abort(): void;
 }
 
-async function getAnthropicApiKey(authStorage: AuthStorage): Promise<string> {
-	const key = await authStorage.getApiKey("anthropic");
+async function getApiKey(authStorage: AuthStorage, provider: string): Promise<string> {
+	const key = await authStorage.getApiKey(provider);
 	if (!key) {
 		throw new Error(
-			"No API key found for anthropic.\n\n" +
-				"Set an API key environment variable, or use /login with Anthropic and link to auth.json from " +
+			`No API key found for ${provider}.\n\n` +
+				`Set an API key environment variable, or use /login with ${provider} and link to auth.json from ` +
 				join(homedir(), ".pi", "mom", "auth.json"),
 		);
 	}
@@ -388,6 +411,27 @@ function formatToolArgsForSlack(_toolName: string, args: Record<string, unknown>
 	return lines.join("\n");
 }
 
+function resolveModel(modelId?: string): Model<Api> {
+	if (!modelId) {
+		return getModel("anthropic", "claude-sonnet-4-5");
+	}
+
+	const parts = modelId.split("/");
+	if (parts.length === 2) {
+		return (getModel as any)(parts[0], parts[1]);
+	}
+
+	// Check known defaults
+	for (const [provider, defaultId] of Object.entries(DEFAULT_MODELS)) {
+		if (defaultId === modelId) {
+			return (getModel as any)(provider, modelId);
+		}
+	}
+
+	// Fallback to anthropic if unknown
+	return (getModel as any)("anthropic", modelId);
+}
+
 // Cache runners per channel
 const channelRunners = new Map<string, AgentRunner>();
 
@@ -395,11 +439,16 @@ const channelRunners = new Map<string, AgentRunner>();
  * Get or create an AgentRunner for a channel.
  * Runners are cached - one per channel, persistent across messages.
  */
-export function getOrCreateRunner(sandboxConfig: SandboxConfig, channelId: string, channelDir: string): AgentRunner {
+export function getOrCreateRunner(
+	sandboxConfig: SandboxConfig,
+	channelId: string,
+	channelDir: string,
+	modelId?: string,
+): AgentRunner {
 	const existing = channelRunners.get(channelId);
 	if (existing) return existing;
 
-	const runner = createRunner(sandboxConfig, channelId, channelDir);
+	const runner = createRunner(sandboxConfig, channelId, channelDir, modelId);
 	channelRunners.set(channelId, runner);
 	return runner;
 }
@@ -408,7 +457,12 @@ export function getOrCreateRunner(sandboxConfig: SandboxConfig, channelId: strin
  * Create a new AgentRunner for a channel.
  * Sets up the session and subscribes to events once.
  */
-function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDir: string): AgentRunner {
+function createRunner(
+	sandboxConfig: SandboxConfig,
+	channelId: string,
+	channelDir: string,
+	modelId?: string,
+): AgentRunner {
 	const executor = createExecutor(sandboxConfig);
 	const workspacePath = executor.getWorkspacePath(channelDir.replace(`/${channelId}`, ""));
 
@@ -428,8 +482,58 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 
 	// Create AuthStorage and ModelRegistry
 	// Auth stored outside workspace so agent can't access it
-	const authStorage = new AuthStorage(join(homedir(), ".pi", "mom", "auth.json"));
+	const authPath = join(homedir(), ".pi", "mom", "auth.json");
+
+	if (!existsSync(authPath)) {
+		log.logWarning(`Auth file not found at ${authPath}`);
+		// Try to look for it in the standard agent location as fallback
+		const agentAuthPath = join(homedir(), ".pi", "agent", "auth.json");
+		if (existsSync(agentAuthPath)) {
+			log.logInfo(`Found auth.json at ${agentAuthPath}, using it.`);
+			// We can use this path instead if the user hasn't linked it
+			// But better to warn the user or just use it?
+			// Let's just use it to be helpful
+		}
+	} else {
+		// Verify it's a valid JSON
+		try {
+			JSON.parse(readFileSync(authPath, "utf-8"));
+			log.logInfo(`Successfully read auth.json at ${authPath}`);
+		} catch (e) {
+			log.logWarning(`Failed to parse auth.json at ${authPath}: ${e}`);
+		}
+	}
+
+	const authStorage = new AuthStorage(authPath);
+	const keys = authStorage.list();
+	log.logInfo(`Loaded ${keys.length} keys from auth.json: ${keys.join(", ")}`);
+
 	const modelRegistry = new ModelRegistry(authStorage);
+
+	const model = resolveModel(modelId);
+	log.logInfo(`[${channelId}] Using model: ${model.provider}/${model.id}`);
+
+	// Debug API key resolution
+	const debugCred = authStorage.get(model.provider);
+	if (!debugCred) {
+		log.logWarning(`No credentials found in auth.json for provider: ${model.provider}`);
+		log.logInfo(`Available providers in auth.json: ${authStorage.list().join(", ")}`);
+	} else {
+		log.logInfo(`Found credentials for ${model.provider} (type: ${debugCred.type})`);
+		if (debugCred.type === "oauth") {
+			const providers = authStorage.getOAuthProviders();
+			const providerImpl = providers.find((p) => p.id === model.provider);
+			log.logInfo(`OAuth provider implementation for ${model.provider}: ${providerImpl ? "FOUND" : "MISSING"}`);
+			log.logInfo(`Registered OAuth providers: ${providers.map((p) => p.id).join(", ")}`);
+
+			if (providerImpl) {
+				const isExpired = Date.now() >= (debugCred as any).expires;
+				log.logInfo(
+					`Token expiration: ${new Date((debugCred as any).expires).toISOString()} (expired: ${isExpired})`,
+				);
+			}
+		}
+	}
 
 	// Create agent
 	const agent = new Agent({
@@ -440,7 +544,15 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 			tools,
 		},
 		convertToLlm,
-		getApiKey: async () => getAnthropicApiKey(authStorage),
+		getApiKey: async () => {
+			try {
+				const key = await getApiKey(authStorage, model.provider);
+				return key;
+			} catch (err) {
+				log.logAgentError("system", `Failed to resolve API key for ${model.provider}: ${err}`);
+				throw err;
+			}
+		},
 	});
 
 	// Load existing messages

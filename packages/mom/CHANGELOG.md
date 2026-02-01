@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Prevent crash when acknowledging Slack events after connection loss by safely handling `ack()` failures
+
+
 ## [0.50.7] - 2026-01-31
 
 ## [0.50.6] - 2026-01-30

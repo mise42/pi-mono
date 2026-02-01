@@ -271,7 +271,15 @@ export class SlackBot {
 
 	private setupEventHandlers(): void {
 		// Channel @mentions
-		this.socketClient.on("app_mention", ({ event, ack }) => {
+		this.socketClient.on("app_mention", async ({ event, ack }) => {
+			const safeAck = async () => {
+				try {
+					await ack();
+				} catch (err) {
+					log.logWarning("Failed to ack app_mention", err instanceof Error ? err.message : String(err));
+				}
+			};
+
 			const e = event as {
 				text: string;
 				channel: string;
@@ -282,7 +290,7 @@ export class SlackBot {
 
 			// Skip DMs (handled by message event)
 			if (e.channel.startsWith("D")) {
-				ack();
+				await safeAck();
 				return;
 			}
 
@@ -304,7 +312,7 @@ export class SlackBot {
 				log.logInfo(
 					`[${e.channel}] Logged old message (pre-startup), not triggering: ${slackEvent.text.substring(0, 30)}`,
 				);
-				ack();
+				await safeAck();
 				return;
 			}
 
@@ -313,24 +321,36 @@ export class SlackBot {
 				if (this.handler.isRunning(e.channel)) {
 					this.handler.handleStop(e.channel, this); // Don't await, don't queue
 				} else {
-					this.postMessage(e.channel, "_Nothing running_");
+					this.postMessage(e.channel, "_Nothing running_").catch((err) =>
+						log.logWarning("Failed to post stop response", err.message),
+					);
 				}
-				ack();
+				await safeAck();
 				return;
 			}
 
 			// SYNC: Check if busy
 			if (this.handler.isRunning(e.channel)) {
-				this.postMessage(e.channel, "_Already working. Say `@mom stop` to cancel._");
+				this.postMessage(e.channel, "_Already working. Say `@mom stop` to cancel._").catch((err) =>
+					log.logWarning("Failed to post busy response", err.message),
+				);
 			} else {
 				this.getQueue(e.channel).enqueue(() => this.handler.handleEvent(slackEvent, this));
 			}
 
-			ack();
+			await safeAck();
 		});
 
 		// All messages (for logging) + DMs (for triggering)
-		this.socketClient.on("message", ({ event, ack }) => {
+		this.socketClient.on("message", async ({ event, ack }) => {
+			const safeAck = async () => {
+				try {
+					await ack();
+				} catch (err) {
+					log.logWarning("Failed to ack message", err instanceof Error ? err.message : String(err));
+				}
+			};
+
 			const e = event as {
 				text?: string;
 				channel: string;
@@ -344,15 +364,15 @@ export class SlackBot {
 
 			// Skip bot messages, edits, etc.
 			if (e.bot_id || !e.user || e.user === this.botUserId) {
-				ack();
+				await safeAck();
 				return;
 			}
 			if (e.subtype !== undefined && e.subtype !== "file_share") {
-				ack();
+				await safeAck();
 				return;
 			}
 			if (!e.text && (!e.files || e.files.length === 0)) {
-				ack();
+				await safeAck();
 				return;
 			}
 
@@ -361,7 +381,7 @@ export class SlackBot {
 
 			// Skip channel @mentions - already handled by app_mention event
 			if (!isDM && isBotMention) {
-				ack();
+				await safeAck();
 				return;
 			}
 
@@ -381,7 +401,7 @@ export class SlackBot {
 			// Only trigger processing for messages AFTER startup (not replayed old messages)
 			if (this.startupTs && e.ts < this.startupTs) {
 				log.logInfo(`[${e.channel}] Skipping old message (pre-startup): ${slackEvent.text.substring(0, 30)}`);
-				ack();
+				await safeAck();
 				return;
 			}
 
@@ -392,20 +412,24 @@ export class SlackBot {
 					if (this.handler.isRunning(e.channel)) {
 						this.handler.handleStop(e.channel, this); // Don't await, don't queue
 					} else {
-						this.postMessage(e.channel, "_Nothing running_");
+						this.postMessage(e.channel, "_Nothing running_").catch((err) =>
+							log.logWarning("Failed to post stop response", err.message),
+						);
 					}
-					ack();
+					await safeAck();
 					return;
 				}
 
 				if (this.handler.isRunning(e.channel)) {
-					this.postMessage(e.channel, "_Already working. Say `stop` to cancel._");
+					this.postMessage(e.channel, "_Already working. Say `stop` to cancel._").catch((err) =>
+						log.logWarning("Failed to post busy response", err.message),
+					);
 				} else {
 					this.getQueue(e.channel).enqueue(() => this.handler.handleEvent(slackEvent, this));
 				}
 			}
 
-			ack();
+			await safeAck();
 		});
 	}
 
