@@ -5,12 +5,13 @@
 ### Added
 
 - Multi-platform support: pi-mom now supports both Slack and Feishu/Lark
-  - New `--platform=slack|feishu` CLI flag to select platform
-  - New `MOM_PLATFORM` environment variable (defaults to "slack")
+  - Platforms are auto-detected from environment variables (no `--platform` flag needed)
+  - Both platforms can run simultaneously if all credentials are provided
   - Feishu requires `FEISHU_APP_ID`, `FEISHU_APP_SECRET` environment variables
   - Optional `FEISHU_DOMAIN` ("feishu" for China, "lark" for international)
 - Platform abstraction layer (`src/platform.ts`) for easier extension to other messaging platforms
 - `PlatformAdapter.supportsThreads` property to control thread behavior per platform
+- Multi-platform event routing: scheduled events are routed to the correct platform based on channel ownership
 
 ### Changed
 

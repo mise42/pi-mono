@@ -14,7 +14,6 @@ import { ChannelStore } from "./store.js";
 // Config
 // ============================================================================
 
-const MOM_PLATFORM = process.env.MOM_PLATFORM ?? "slack";
 const MOM_SLACK_APP_TOKEN = process.env.MOM_SLACK_APP_TOKEN;
 const MOM_SLACK_BOT_TOKEN = process.env.MOM_SLACK_BOT_TOKEN;
 const FEISHU_APP_ID = process.env.FEISHU_APP_ID;
@@ -26,7 +25,6 @@ interface ParsedArgs {
 	sandbox: SandboxConfig;
 	downloadChannel?: string;
 	model?: string;
-	platform?: string;
 }
 
 function parseArgs(): ParsedArgs {
@@ -35,7 +33,6 @@ function parseArgs(): ParsedArgs {
 	let workingDir: string | undefined;
 	let downloadChannelId: string | undefined;
 	let model: string | undefined;
-	let platform: string | undefined;
 
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
@@ -51,10 +48,6 @@ function parseArgs(): ParsedArgs {
 			model = arg.slice("--model=".length);
 		} else if (arg === "--model") {
 			model = args[++i];
-		} else if (arg.startsWith("--platform=")) {
-			platform = arg.slice("--platform=".length);
-		} else if (arg === "--platform") {
-			platform = args[++i];
 		} else if (!arg.startsWith("-")) {
 			workingDir = arg;
 		}
@@ -65,7 +58,6 @@ function parseArgs(): ParsedArgs {
 		sandbox,
 		downloadChannel: downloadChannelId,
 		model,
-		platform,
 	};
 }
 
@@ -83,12 +75,14 @@ if (parsedArgs.downloadChannel) {
 
 // Normal bot mode - require working dir
 if (!parsedArgs.workingDir) {
-	console.error("Usage: mom [--platform=slack|feishu] [--sandbox=host|docker:<name>] <working-directory>");
+	console.error("Usage: mom [--sandbox=host|docker:<name>] <working-directory>");
 	console.error("       mom --download <channel-id>");
 	console.error("");
-	console.error("Platforms:");
-	console.error("  slack (default)  - Requires MOM_SLACK_APP_TOKEN, MOM_SLACK_BOT_TOKEN");
-	console.error("  feishu           - Requires FEISHU_APP_ID, FEISHU_APP_SECRET");
+	console.error("Platforms (auto-detected from environment variables):");
+	console.error("  Slack  - MOM_SLACK_APP_TOKEN + MOM_SLACK_BOT_TOKEN");
+	console.error("  Feishu - FEISHU_APP_ID + FEISHU_APP_SECRET (+ optional FEISHU_DOMAIN)");
+	console.error("");
+	console.error("Both platforms can run simultaneously if all credentials are provided.");
 	process.exit(1);
 }
 
@@ -97,8 +91,6 @@ const { workingDir, sandbox, model } = {
 	sandbox: parsedArgs.sandbox,
 	model: parsedArgs.model,
 };
-
-const platform = parsedArgs.platform ?? MOM_PLATFORM;
 
 await validateSandbox(sandbox);
 
@@ -112,11 +104,15 @@ interface ChannelState {
 	store: ChannelStore;
 	stopRequested: boolean;
 	stopMessageTs?: string;
+	adapter: PlatformAdapter; // Which platform this channel belongs to
 }
 
 const channelStates = new Map<string, ChannelState>();
 
-function getState(channelId: string, botToken?: string): ChannelState {
+// Track which adapter owns which channel (for events)
+const channelAdapters = new Map<string, PlatformAdapter>();
+
+function getState(channelId: string, adapter: PlatformAdapter, botToken?: string): ChannelState {
 	let state = channelStates.get(channelId);
 	if (!state) {
 		const channelDir = join(workingDir, channelId);
@@ -125,8 +121,10 @@ function getState(channelId: string, botToken?: string): ChannelState {
 			runner: getOrCreateRunner(sandbox, channelId, channelDir, model),
 			store: new ChannelStore({ workingDir, botToken }),
 			stopRequested: false,
+			adapter,
 		};
 		channelStates.set(channelId, state);
+		channelAdapters.set(channelId, adapter);
 	}
 	return state;
 }
@@ -287,13 +285,13 @@ function createPlatformHandler(botToken?: string): PlatformHandler {
 		},
 
 		async handleEvent(event: PlatformEvent, adapter: PlatformAdapter, isEvent?: boolean): Promise<void> {
-			const state = getState(event.channel, botToken);
+			const state = getState(event.channel, adapter, botToken);
 
 			// Start run
 			state.running = true;
 			state.stopRequested = false;
 
-			log.logInfo(`[${event.channel}] Starting run: ${event.text.substring(0, 50)}`);
+			log.logInfo(`[${adapter.platformId}:${event.channel}] Starting run: ${event.text.substring(0, 50)}`);
 
 			try {
 				// Create context adapter
@@ -323,58 +321,172 @@ function createPlatformHandler(botToken?: string): PlatformHandler {
 }
 
 // ============================================================================
-// Slack-specific handler (for backward compatibility)
+// Slack-specific handler (for backward compatibility with SlackBot)
 // ============================================================================
 
-const slackHandler: MomHandler = {
-	isRunning(channelId: string): boolean {
-		const state = channelStates.get(channelId);
-		return state?.running ?? false;
-	},
+function createSlackHandler(botToken: string): MomHandler {
+	return {
+		isRunning(channelId: string): boolean {
+			const state = channelStates.get(channelId);
+			return state?.running ?? false;
+		},
 
-	async handleStop(channelId: string, slack: SlackBot): Promise<void> {
-		const state = channelStates.get(channelId);
-		if (state?.running) {
-			state.stopRequested = true;
-			state.runner.abort();
-			const ts = await slack.postMessage(channelId, "_Stopping..._");
-			state.stopMessageTs = ts;
-		} else {
-			await slack.postMessage(channelId, "_Nothing running_");
-		}
-	},
+		async handleStop(channelId: string, slack: SlackBot): Promise<void> {
+			const state = channelStates.get(channelId);
+			if (state?.running) {
+				state.stopRequested = true;
+				state.runner.abort();
+				const ts = await slack.postMessage(channelId, "_Stopping..._");
+				state.stopMessageTs = ts;
+			} else {
+				await slack.postMessage(channelId, "_Nothing running_");
+			}
+		},
 
-	async handleEvent(event: SlackEvent, slack: SlackBot, isEvent?: boolean): Promise<void> {
-		const state = getState(event.channel, MOM_SLACK_BOT_TOKEN);
+		async handleEvent(event: SlackEvent, slack: SlackBot, isEvent?: boolean): Promise<void> {
+			const state = getState(event.channel, slack as unknown as PlatformAdapter, botToken);
 
-		state.running = true;
-		state.stopRequested = false;
+			state.running = true;
+			state.stopRequested = false;
 
-		log.logInfo(`[${event.channel}] Starting run: ${event.text.substring(0, 50)}`);
+			log.logInfo(`[slack:${event.channel}] Starting run: ${event.text.substring(0, 50)}`);
 
-		try {
-			const ctx = createPlatformContext(event, slack as unknown as PlatformAdapter, state, isEvent);
+			try {
+				const ctx = createPlatformContext(event, slack as unknown as PlatformAdapter, state, isEvent);
 
-			await ctx.setTyping(true);
-			await ctx.setWorking(true);
-			const result = await state.runner.run(ctx as any, state.store);
-			await ctx.setWorking(false);
+				await ctx.setTyping(true);
+				await ctx.setWorking(true);
+				const result = await state.runner.run(ctx as any, state.store);
+				await ctx.setWorking(false);
 
-			if (result.stopReason === "aborted" && state.stopRequested) {
-				if (state.stopMessageTs) {
-					await slack.updateMessage(event.channel, state.stopMessageTs, "_Stopped_");
-					state.stopMessageTs = undefined;
-				} else {
-					await slack.postMessage(event.channel, "_Stopped_");
+				if (result.stopReason === "aborted" && state.stopRequested) {
+					if (state.stopMessageTs) {
+						await slack.updateMessage(event.channel, state.stopMessageTs, "_Stopped_");
+						state.stopMessageTs = undefined;
+					} else {
+						await slack.postMessage(event.channel, "_Stopped_");
+					}
+				}
+			} catch (err) {
+				log.logWarning(`[${event.channel}] Run error`, err instanceof Error ? err.message : String(err));
+			} finally {
+				state.running = false;
+			}
+		},
+	};
+}
+
+// ============================================================================
+// Multi-platform event router for EventsWatcher
+// ============================================================================
+
+/**
+ * Creates a proxy adapter that routes events to the correct platform
+ * based on which adapter owns the channel.
+ */
+function createMultiPlatformRouter(adapters: PlatformAdapter[]): PlatformAdapter {
+	// Use the first adapter as default (for interface compliance)
+	const defaultAdapter = adapters[0];
+
+	return {
+		platformId: "slack", // Default, not actually used for routing
+		supportsThreads: true,
+
+		async start(): Promise<void> {
+			// Already started individually
+		},
+
+		async stop(): Promise<void> {
+			// Stopped individually
+		},
+
+		getUser(userId: string) {
+			for (const adapter of adapters) {
+				const user = adapter.getUser(userId);
+				if (user) return user;
+			}
+			return undefined;
+		},
+
+		getChannel(channelId: string) {
+			for (const adapter of adapters) {
+				const channel = adapter.getChannel(channelId);
+				if (channel) return channel;
+			}
+			return undefined;
+		},
+
+		getAllUsers() {
+			const users = new Map<string, ReturnType<PlatformAdapter["getUser"]>>();
+			for (const adapter of adapters) {
+				for (const user of adapter.getAllUsers()) {
+					users.set(user.id, user);
 				}
 			}
-		} catch (err) {
-			log.logWarning(`[${event.channel}] Run error`, err instanceof Error ? err.message : String(err));
-		} finally {
-			state.running = false;
-		}
-	},
-};
+			return Array.from(users.values()).filter((u): u is NonNullable<typeof u> => u !== undefined);
+		},
+
+		getAllChannels() {
+			const channels = new Map<string, ReturnType<PlatformAdapter["getChannel"]>>();
+			for (const adapter of adapters) {
+				for (const channel of adapter.getAllChannels()) {
+					channels.set(channel.id, channel);
+				}
+			}
+			return Array.from(channels.values()).filter((c): c is NonNullable<typeof c> => c !== undefined);
+		},
+
+		async postMessage(channel: string, text: string): Promise<string> {
+			const adapter = channelAdapters.get(channel) ?? defaultAdapter;
+			return adapter.postMessage(channel, text);
+		},
+
+		async updateMessage(channel: string, messageId: string, text: string): Promise<void> {
+			const adapter = channelAdapters.get(channel) ?? defaultAdapter;
+			return adapter.updateMessage(channel, messageId, text);
+		},
+
+		async deleteMessage(channel: string, messageId: string): Promise<void> {
+			const adapter = channelAdapters.get(channel) ?? defaultAdapter;
+			return adapter.deleteMessage(channel, messageId);
+		},
+
+		async postInThread(channel: string, threadId: string, text: string): Promise<string> {
+			const adapter = channelAdapters.get(channel) ?? defaultAdapter;
+			return adapter.postInThread(channel, threadId, text);
+		},
+
+		async uploadFile(channel: string, filePath: string, title?: string): Promise<void> {
+			const adapter = channelAdapters.get(channel) ?? defaultAdapter;
+			return adapter.uploadFile(channel, filePath, title);
+		},
+
+		logBotResponse(channelId: string, text: string, ts: string): void {
+			const adapter = channelAdapters.get(channelId) ?? defaultAdapter;
+			adapter.logBotResponse(channelId, text, ts);
+		},
+
+		logToFile(channel: string, entry: object): void {
+			const adapter = channelAdapters.get(channel) ?? defaultAdapter;
+			adapter.logToFile(channel, entry);
+		},
+
+		enqueueEvent(event: PlatformEvent): boolean {
+			// Route to the adapter that owns this channel
+			const adapter = channelAdapters.get(event.channel);
+			if (adapter) {
+				return adapter.enqueueEvent(event);
+			}
+			// If channel not seen before, try all adapters
+			for (const a of adapters) {
+				if (a.enqueueEvent(event)) {
+					return true;
+				}
+			}
+			return false;
+		},
+	};
+}
 
 // ============================================================================
 // Start
@@ -382,65 +494,82 @@ const slackHandler: MomHandler = {
 
 log.logStartup(workingDir, sandbox.type === "host" ? "host" : `docker:${sandbox.container}`);
 
-let bot: PlatformAdapter;
+// Detect available platforms
+const hasSlack = MOM_SLACK_APP_TOKEN && MOM_SLACK_BOT_TOKEN;
+const hasFeishu = FEISHU_APP_ID && FEISHU_APP_SECRET;
 
-if (platform === "feishu") {
-	// Feishu platform
-	if (!FEISHU_APP_ID || !FEISHU_APP_SECRET) {
-		console.error("Missing env: FEISHU_APP_ID, FEISHU_APP_SECRET");
-		process.exit(1);
-	}
+if (!hasSlack && !hasFeishu) {
+	console.error("No platform credentials found.");
+	console.error("");
+	console.error("Set environment variables for at least one platform:");
+	console.error("  Slack:  MOM_SLACK_APP_TOKEN, MOM_SLACK_BOT_TOKEN");
+	console.error("  Feishu: FEISHU_APP_ID, FEISHU_APP_SECRET");
+	process.exit(1);
+}
 
+const adapters: PlatformAdapter[] = [];
+const shutdownHandlers: Array<() => Promise<void>> = [];
+
+// Start Slack if credentials available
+if (hasSlack) {
+	const sharedStore = new ChannelStore({ workingDir, botToken: MOM_SLACK_BOT_TOKEN });
+	const slackHandler = createSlackHandler(MOM_SLACK_BOT_TOKEN!);
+
+	const slack = new SlackBotClass(slackHandler, {
+		appToken: MOM_SLACK_APP_TOKEN!,
+		botToken: MOM_SLACK_BOT_TOKEN!,
+		workingDir,
+		store: sharedStore,
+	});
+
+	adapters.push(slack as unknown as PlatformAdapter);
+	shutdownHandlers.push(() => slack.stop());
+
+	log.logInfo("Platform: Slack (enabled)");
+}
+
+// Start Feishu if credentials available
+if (hasFeishu) {
 	const { FeishuBot } = await import("./feishu.js");
 	const sharedStore = new ChannelStore({ workingDir });
 
-	bot = new FeishuBot(createPlatformHandler(), {
+	const feishu = new FeishuBot(createPlatformHandler(), {
 		feishuConfig: {
-			appId: FEISHU_APP_ID,
-			appSecret: FEISHU_APP_SECRET,
+			appId: FEISHU_APP_ID!,
+			appSecret: FEISHU_APP_SECRET!,
 			domain: FEISHU_DOMAIN,
 		},
 		workingDir,
 		store: sharedStore,
 	});
 
-	log.logInfo(`Platform: Feishu (${FEISHU_DOMAIN})`);
-} else {
-	// Slack platform (default)
-	if (!MOM_SLACK_APP_TOKEN || !MOM_SLACK_BOT_TOKEN) {
-		console.error("Missing env: MOM_SLACK_APP_TOKEN, MOM_SLACK_BOT_TOKEN");
-		process.exit(1);
-	}
+	adapters.push(feishu);
+	shutdownHandlers.push(() => feishu.stop());
 
-	const sharedStore = new ChannelStore({ workingDir, botToken: MOM_SLACK_BOT_TOKEN });
-
-	bot = new SlackBotClass(slackHandler, {
-		appToken: MOM_SLACK_APP_TOKEN,
-		botToken: MOM_SLACK_BOT_TOKEN,
-		workingDir,
-		store: sharedStore,
-	}) as unknown as PlatformAdapter;
-
-	log.logInfo("Platform: Slack");
+	log.logInfo(`Platform: Feishu (enabled, domain: ${FEISHU_DOMAIN})`);
 }
 
+log.logInfo(`Total platforms: ${adapters.length}`);
+
+// Create event router for multi-platform support
+const eventRouter = adapters.length === 1 ? adapters[0] : createMultiPlatformRouter(adapters);
+
 // Start events watcher
-const eventsWatcher = createEventsWatcher(workingDir, bot);
+const eventsWatcher = createEventsWatcher(workingDir, eventRouter);
 eventsWatcher.start();
 
 // Handle shutdown
-process.on("SIGINT", async () => {
+const shutdown = async () => {
 	log.logInfo("Shutting down...");
 	eventsWatcher.stop();
-	await bot.stop();
+	for (const handler of shutdownHandlers) {
+		await handler();
+	}
 	process.exit(0);
-});
+};
 
-process.on("SIGTERM", async () => {
-	log.logInfo("Shutting down...");
-	eventsWatcher.stop();
-	await bot.stop();
-	process.exit(0);
-});
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
 
-await bot.start();
+// Start all adapters
+await Promise.all(adapters.map((a) => a.start()));

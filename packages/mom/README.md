@@ -78,15 +78,13 @@ npm install @mariozechner/pi-mom
 
 ## Quick Start
 
-### Slack
+### Slack Only
 
 ```bash
 # Set environment variables
 export MOM_SLACK_APP_TOKEN=xapp-...
 export MOM_SLACK_BOT_TOKEN=xoxb-...
-# Option 1: Anthropic API key
 export ANTHROPIC_API_KEY=sk-ant-...
-# Option 2: use /login command in pi agent, then copy/link auth.json to ~/.pi/mom/
 
 # Create Docker sandbox (recommended)
 docker run -d \
@@ -95,13 +93,11 @@ docker run -d \
   alpine:latest \
   tail -f /dev/null
 
-# Run mom in Docker mode
+# Run mom
 mom --sandbox=docker:mom-sandbox ./data
-
-# Mom will install any tools she needs herself (git, jq, etc.)
 ```
 
-### Feishu/Lark
+### Feishu/Lark Only
 
 ```bash
 # Set environment variables
@@ -117,8 +113,30 @@ docker run -d \
   alpine:latest \
   tail -f /dev/null
 
-# Run mom with Feishu platform
-mom --platform=feishu --sandbox=docker:mom-sandbox ./data
+# Run mom
+mom --sandbox=docker:mom-sandbox ./data
+```
+
+### Both Platforms Simultaneously
+
+```bash
+# Set ALL environment variables
+export MOM_SLACK_APP_TOKEN=xapp-...
+export MOM_SLACK_BOT_TOKEN=xoxb-...
+export FEISHU_APP_ID=cli_xxxxx
+export FEISHU_APP_SECRET=xxxxx
+export FEISHU_DOMAIN=feishu
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Create Docker sandbox
+docker run -d \
+  --name mom-sandbox \
+  -v $(pwd)/data:/workspace \
+  alpine:latest \
+  tail -f /dev/null
+
+# Run mom - both platforms start automatically
+mom --sandbox=docker:mom-sandbox ./data
 ```
 
 ## CLI Options
@@ -127,7 +145,6 @@ mom --platform=feishu --sandbox=docker:mom-sandbox ./data
 mom [options] <working-directory>
 
 Options:
-  --platform=slack|feishu     Platform to use (default: slack, or MOM_PLATFORM env)
   --sandbox=host              Run tools on host (not recommended)
   --sandbox=docker:<name>     Run tools in Docker container (recommended)
   --model=<id>                LLM model to use (default: anthropic/claude-sonnet-4-5)
@@ -137,11 +154,12 @@ Options:
                               - openai/gpt-5.1-codex
 ```
 
+Platforms are auto-detected from environment variables. If credentials for multiple platforms are provided, all platforms run simultaneously.
+
 ## Environment Variables
 
 | Variable | Description |
 |----------|-------------|
-| `MOM_PLATFORM` | Platform to use: `slack` (default) or `feishu` |
 | `MOM_SLACK_APP_TOKEN` | Slack app-level token (xapp-...) |
 | `MOM_SLACK_BOT_TOKEN` | Slack bot token (xoxb-...) |
 | `FEISHU_APP_ID` | Feishu/Lark App ID |
