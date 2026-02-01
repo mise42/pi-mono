@@ -1,5 +1,5 @@
 import { Agent, type AgentEvent } from "@mariozechner/pi-agent-core";
-import { type Api, getModel, type ImageContent, type KnownProvider, type Model } from "@mariozechner/pi-ai";
+import { type Api, getModel, type ImageContent, type Model } from "@mariozechner/pi-ai";
 import {
 	AgentSession,
 	AuthStorage,

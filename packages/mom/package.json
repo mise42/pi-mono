@@ -20,6 +20,7 @@
 	},
 	"dependencies": {
 		"@anthropic-ai/sandbox-runtime": "^0.0.16",
+		"@larksuiteoapi/node-sdk": "^1.30.0",
 		"@mariozechner/pi-agent-core": "^0.50.7",
 		"@mariozechner/pi-ai": "^0.50.7",
 		"@mariozechner/pi-coding-agent": "^0.50.7",
@@ -37,6 +38,8 @@
 	},
 	"keywords": [
 		"slack",
+		"feishu",
+		"lark",
 		"bot",
 		"ai",
 		"agent"

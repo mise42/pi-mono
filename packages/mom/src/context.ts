@@ -271,6 +271,18 @@ export class MomSettingsManager {
 	}
 
 	// Compatibility methods for AgentSession
+	getImageAutoResize(): boolean {
+		return true; // Default to true for Mom
+	}
+
+	getBlockImages(): boolean {
+		return false; // Default to false for Mom
+	}
+
+	getThinkingBudgets(): Record<string, number> | undefined {
+		return undefined; // Default to undefined for Mom
+	}
+
 	getSteeringMode(): "all" | "one-at-a-time" {
 		return "one-at-a-time"; // Mom processes one message at a time
 	}
@@ -293,5 +305,77 @@ export class MomSettingsManager {
 
 	getHookTimeout(): number {
 		return 30000;
+	}
+
+	getShellCommandPrefix(): string | undefined {
+		return undefined;
+	}
+
+	getShellPath(): string | undefined {
+		return undefined;
+	}
+
+	getShowHardwareCursor(): boolean {
+		return false;
+	}
+
+	getEditorPaddingX(): number {
+		return 0;
+	}
+
+	getAutocompleteMaxVisible(): number {
+		return 5;
+	}
+
+	getCodeBlockIndent(): string {
+		return "  ";
+	}
+
+	getEnabledModels(): string[] | undefined {
+		return undefined;
+	}
+
+	getDoubleEscapeAction(): "fork" | "tree" | "none" {
+		return "tree";
+	}
+
+	getHideThinkingBlock(): boolean {
+		return false;
+	}
+
+	getQuietStartup(): boolean {
+		return true; // Mom should be quiet
+	}
+
+	getCollapseChangelog(): boolean {
+		return true;
+	}
+
+	getPackages(): unknown[] {
+		return [];
+	}
+
+	getExtensionPaths(): string[] {
+		return [];
+	}
+
+	getSkillPaths(): string[] {
+		return [];
+	}
+
+	getPromptTemplatePaths(): string[] {
+		return [];
+	}
+
+	getThemePaths(): string[] {
+		return [];
+	}
+
+	getEnableSkillCommands(): boolean {
+		return true;
+	}
+
+	getShowImages(): boolean {
+		return true;
 	}
 }

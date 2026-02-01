@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- Multi-platform support: pi-mom now supports both Slack and Feishu/Lark
+  - New `--platform=slack|feishu` CLI flag to select platform
+  - New `MOM_PLATFORM` environment variable (defaults to "slack")
+  - Feishu requires `FEISHU_APP_ID`, `FEISHU_APP_SECRET` environment variables
+  - Optional `FEISHU_DOMAIN` ("feishu" for China, "lark" for international)
+- Platform abstraction layer (`src/platform.ts`) for easier extension to other messaging platforms
+
 ### Fixed
 
 - Prevent crash when acknowledging Slack events after connection loss by safely handling `ack()` failures

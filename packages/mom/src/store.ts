@@ -21,7 +21,7 @@ export interface LoggedMessage {
 
 export interface ChannelStoreConfig {
 	workingDir: string;
-	botToken: string; // needed for authenticated file downloads
+	botToken?: string; // needed for authenticated file downloads (Slack-specific)
 }
 
 interface PendingDownload {
@@ -41,7 +41,7 @@ export class ChannelStore {
 
 	constructor(config: ChannelStoreConfig) {
 		this.workingDir = config.workingDir;
-		this.botToken = config.botToken;
+		this.botToken = config.botToken ?? "";
 
 		// Ensure working directory exists
 		if (!existsSync(this.workingDir)) {

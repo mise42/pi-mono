@@ -3,6 +3,7 @@ import { WebClient } from "@slack/web-api";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "fs";
 import { basename, join } from "path";
 import * as log from "./log.js";
+import type { PlatformAdapter } from "./platform.js";
 import type { Attachment, ChannelStore } from "./store.js";
 
 // ============================================================================
@@ -122,7 +123,9 @@ class ChannelQueue {
 // SlackBot
 // ============================================================================
 
-export class SlackBot {
+export class SlackBot implements PlatformAdapter {
+	readonly platformId = "slack" as const;
+
 	private socketClient: SocketModeClient;
 	private webClient: WebClient;
 	private handler: MomHandler;
@@ -166,6 +169,11 @@ export class SlackBot {
 		this.startupTs = (Date.now() / 1000).toFixed(6);
 
 		log.logConnected();
+	}
+
+	async stop(): Promise<void> {
+		await this.socketClient.disconnect();
+		log.logInfo("Slack bot stopped");
 	}
 
 	getUser(userId: string): SlackUser | undefined {

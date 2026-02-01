@@ -1,12 +1,12 @@
 # mom (Master Of Mischief)
 
-A Slack bot powered by an LLM that can execute bash commands, read/write files, and interact with your development environment. Mom is **self-managing**. She installs her own tools, programs [CLI tools (aka "skills")](https://mariozechner.at/posts/2025-11-02-what-if-you-dont-need-mcp/) she can use to help with your workflows and tasks, configures credentials, and maintains her workspace autonomously.
+A multi-platform chat bot powered by an LLM that can execute bash commands, read/write files, and interact with your development environment. Mom is **self-managing**. She installs her own tools, programs [CLI tools (aka "skills")](https://mariozechner.at/posts/2025-11-02-what-if-you-dont-need-mcp/) she can use to help with your workflows and tasks, configures credentials, and maintains her workspace autonomously.
 
 ## Features
 
 - **Minimal by Design**: Turn mom into whatever you need. She builds her own tools without pre-built assumptions
 - **Self-Managing**: Installs tools (apk, npm, etc.), writes scripts, configures credentials. Zero setup from you
-- **Slack Integration**: Responds to @mentions in channels and DMs
+- **Multi-Platform**: Supports Slack and Feishu/Lark. Responds to @mentions in channels and DMs
 - **Full Bash Access**: Execute any command, read/write files, automate workflows
 - **Docker Sandbox**: Isolate mom in a container (recommended for all use)
 - **Persistent Workspace**: All conversation history, files, and tools stored in one directory you control
@@ -26,7 +26,9 @@ A Slack bot powered by an LLM that can execute bash commands, read/write files, 
 npm install @mariozechner/pi-mom
 ```
 
-### Slack App Setup
+## Platform Setup
+
+### Slack
 
 1. Create a new Slack app at https://api.slack.com/apps
 2. Enable **Socket Mode** (Settings → Socket Mode → Enable)
@@ -56,7 +58,27 @@ npm install @mariozechner/pi-mom
 7. Install the app to your workspace. Get the **Bot User OAuth Token**. This is `MOM_SLACK_BOT_TOKEN`
 8. Add mom to any channels where you want her to operate (she'll only see messages in channels she's added to)
 
+### Feishu/Lark (飞书)
+
+1. Go to [Feishu Open Platform](https://open.feishu.cn/app) (or [Lark Developer](https://open.larksuite.com/app) for international)
+2. Create a new **Custom App**
+3. Get the **App ID** and **App Secret** from Basic Information. These are `FEISHU_APP_ID` and `FEISHU_APP_SECRET`
+4. Add **Permissions** (Permissions & Scopes):
+   - `im:message` - Send and receive messages
+   - `im:message.group_at_msg` - Receive group @mentions
+   - `im:message.p2p_msg` - Receive DMs
+   - `im:chat:readonly` - List chats
+   - `contact:user.base:readonly` - Read user info
+5. **Enable Bot** (Bot section):
+   - Enable "Using Bot"
+   - Select "Long Connection" mode (WebSocket)
+6. **Subscribe to Events** (Event Subscriptions):
+   - `im.message.receive_v1` - Receive messages
+7. Publish the app version and deploy
+
 ## Quick Start
+
+### Slack
 
 ```bash
 # Set environment variables
@@ -79,40 +101,82 @@ mom --sandbox=docker:mom-sandbox ./data
 # Mom will install any tools she needs herself (git, jq, etc.)
 ```
 
+### Feishu/Lark
+
+```bash
+# Set environment variables
+export FEISHU_APP_ID=cli_xxxxx
+export FEISHU_APP_SECRET=xxxxx
+export FEISHU_DOMAIN=feishu  # or "lark" for international
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Create Docker sandbox (recommended)
+docker run -d \
+  --name mom-sandbox \
+  -v $(pwd)/data:/workspace \
+  alpine:latest \
+  tail -f /dev/null
+
+# Run mom with Feishu platform
+mom --platform=feishu --sandbox=docker:mom-sandbox ./data
+```
+
 ## CLI Options
 
 ```bash
 mom [options] <working-directory>
 
 Options:
+  --platform=slack|feishu     Platform to use (default: slack, or MOM_PLATFORM env)
   --sandbox=host              Run tools on host (not recommended)
   --sandbox=docker:<name>     Run tools in Docker container (recommended)
+  --model=<id>                LLM model to use (default: anthropic/claude-sonnet-4-5)
+                              Examples:
+                              - google-antigravity/gemini-3-pro-high
+                              - anthropic/claude-opus-4-5
+                              - openai/gpt-5.1-codex
 ```
 
 ## Environment Variables
 
 | Variable | Description |
 |----------|-------------|
+| `MOM_PLATFORM` | Platform to use: `slack` (default) or `feishu` |
 | `MOM_SLACK_APP_TOKEN` | Slack app-level token (xapp-...) |
 | `MOM_SLACK_BOT_TOKEN` | Slack bot token (xoxb-...) |
+| `FEISHU_APP_ID` | Feishu/Lark App ID |
+| `FEISHU_APP_SECRET` | Feishu/Lark App Secret |
+| `FEISHU_DOMAIN` | Feishu domain: `feishu` (China) or `lark` (International). Default: `feishu` |
 | `ANTHROPIC_API_KEY` | (Optional) Anthropic API key |
 
 ## Authentication
 
-Mom needs credentials for Anthropic API. The options to set it are:
+Mom needs credentials for the LLM API she uses.
+
+### Anthropic (Default)
 
 1. **Environment Variable**
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-2. **OAuth Login via coding agent command** (Recommended for Claude Pro/Max)
+2. **OAuth Login** (Recommended for Claude Pro/Max)
+   - Use `/login` in pi-coding-agent, then link `auth.json`:
+   ```bash
+   ln -s ~/.pi/agent/auth.json ~/.pi/mom/auth.json
+   ```
 
-- run interactive coding agent session: `npx @mariozechner/pi-coding-agent`
-- enter `/login` command
-  - choose "Anthropic" provider
-  - follow instructions in the browser
-- link `auth.json` to mom: `ln -s ~/.pi/agent/auth.json ~/.pi/mom/auth.json`
+### Google Antigravity (Gemini)
+
+Use `--model=google-antigravity/gemini-3-pro-high`.
+
+1. **OAuth Login** (Required)
+   - Use `/login` in pi-coding-agent (select "Google Antigravity")
+   - Link `auth.json` (see above)
+
+### Other Providers
+
+Set the appropriate environment variable (e.g., `OPENAI_API_KEY`, `GEMINI_API_KEY`) or use `auth.json` if supported by pi-agent.
 
 ## How Mom Works
 
